@@ -7,6 +7,7 @@ import type {
   TmdbCollection,
   TmdbCompanySearchResponse,
   TmdbExternalIdResponse,
+  TmdbExternalIds,
   TmdbGenre,
   TmdbGenresResult,
   TmdbKeyword,
@@ -161,7 +162,30 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         params: { query, page, include_adult: includeAdult, language },
       });
 
-      return data;
+      // Filter out TV shows that don't have a TVDB ID
+      const filteredResults = await Promise.all(
+        data.results.map(async (item) => {
+          // Keep movies and people as-is
+          if (item.media_type !== 'tv') {
+            return item;
+          }
+  
+          try {
+            // Fetch external IDs for TV show
+            const ext = await this.get<TmdbExternalIds>(`/tv/${item.id}/external_ids`);
+            // Keep only if TVDB ID exists
+            return ext.tvdb_id ? item : null;
+          } catch {
+            // If fetching external IDs fails, skip this result
+            return null;
+          }
+        })
+      );
+  
+      return {
+        ...data,
+        results: filteredResults.filter((r): r is NonNullable<typeof r> => r !== null),
+      };
     } catch (e) {
       return {
         page: 1,
@@ -219,7 +243,25 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         },
       });
 
-      return data;
+      // Fetch external IDs for each show and filter out ones without tvdb_id
+      const filteredResults = [];
+      for (const show of data.results) {
+        try {
+          const ext = await this.get<TmdbExternalIds>(`/tv/${show.id}/external_ids`);
+          if (ext.tvdb_id) {
+            filteredResults.push(show);
+          }
+        } catch {
+          // Skip if external ID fetch fails
+        }
+      }
+  
+      // Return same structure, but filtered
+      return {
+        ...data,
+        results: filteredResults,
+        total_results: filteredResults.length,
+      };
     } catch (e) {
       return {
         page: 1,
